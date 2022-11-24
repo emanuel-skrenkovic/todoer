@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -37,14 +38,20 @@ func findGoFilePaths(path string) ([]string, error) {
 				continue
 			}
 
-			foundFiles, err := findGoFilePaths(info.Name())
+			absolutePath, err := filepath.Abs(info.Name())
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			foundFiles, err := findGoFilePaths(absolutePath)
 			if err != nil {
 				return nil, err
 			}
 
 			goFilePaths = append(goFilePaths, foundFiles...)
+
 		} else if strings.HasSuffix(info.Name(), goExtension) {
-			goFilePaths = append(goFilePaths, info.Name())
+			goFilePaths = append(goFilePaths, filepath.Join(path, info.Name()))
 		}
 	}
 
@@ -129,22 +136,30 @@ func getFileTodos(path string) ([]Todo, error) {
 		lineNum += 1
 	}
 
+	if current != nil {
+		current.lineEnd = lineNum - 1
+		todos = append(todos, *current)
+		current = nil
+	}
+
 	return todos, nil
 }
 
 func main() {
 	path := os.Args[1]
-	paths, err := findGoFilePaths(path)
+	absolutePath, err := filepath.Abs(path)
 	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+		log.Fatal(err)
+	}
+
+	paths, err := findGoFilePaths(absolutePath)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	todos := make([]Todo, 0)
 
 	for _, path := range paths {
-		fmt.Println(path)
-
 		t, err := getFileTodos(path)
 		if err != nil {
 			fmt.Printf("error occurred getting todos for file %s: %s", path, err.Error())
