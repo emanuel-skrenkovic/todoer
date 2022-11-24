@@ -12,8 +12,10 @@ import (
 const goExtension = ".go"
 
 type Todo struct {
-	filePath string
-	content  string
+	filePath  string
+	content   string
+	lineStart int
+	lineEnd   int
 }
 
 func findGoFilePaths(path string) ([]string, error) {
@@ -55,16 +57,23 @@ func getFileTodos(path string) ([]Todo, error) {
 		return nil, err
 	}
 
+	// TODO: single line TODO example
+
 	defer f.Close()
 
-	// TODO: read file line-by-line and
-	// create todos.
+	// TODO: multi line todo with
+	// double slashes.
 
 	todos := make([]Todo, 0)
 
 	insideComment := false
+	insideTodo := false
+
+	var current *Todo
 
 	rd := bufio.NewReader(f)
+
+	lineNum := 1
 	for {
 		line, err := rd.ReadString('\n')
 		if err != nil {
@@ -76,8 +85,17 @@ func getFileTodos(path string) ([]Todo, error) {
 			break
 		}
 
+		if !insideTodo && current != nil {
+			current.lineEnd = lineNum - 1
+			todos = append(todos, *current)
+			current = nil
+		}
+
+		/* TODO: single line comment with slash star */
+
 		/*
-		  TODO: clear up this crap
+		   TODO: multi line comment with
+		   slash star
 		*/
 
 		trimmedLine := strings.TrimSpace(line)
@@ -89,16 +107,26 @@ func getFileTodos(path string) ([]Todo, error) {
 		shortComment := false
 		if !insideComment {
 			shortComment = strings.HasPrefix(trimmedLine, "//")
+			if !shortComment {
+				insideTodo = false
+			}
 		}
 
 		if (insideComment || shortComment) && strings.Contains(line, "TODO") {
-			todo := Todo{content: line}
-			todos = append(todos, todo)
+			insideTodo = true
+			current = &Todo{filePath: path, lineStart: lineNum}
+		}
+
+		if insideTodo {
+			current.content += line
 		}
 
 		if strings.HasSuffix(trimmedLine, "*/") {
 			insideComment = false
+			insideTodo = false
 		}
+
+		lineNum += 1
 	}
 
 	return todos, nil
@@ -128,7 +156,12 @@ func main() {
 
 	for _, todo := range todos {
 		fmt.Println("===========================")
-		fmt.Printf("Found TODO:\n")
+		fmt.Printf(
+			"Found TODO in file '%s' starting at: %d, ending at: %d:\n",
+			todo.filePath,
+			todo.lineStart,
+			todo.lineEnd,
+		)
 		fmt.Printf("Content:\n")
 		fmt.Println(todo.content)
 		fmt.Println()
