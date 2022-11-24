@@ -38,12 +38,7 @@ func findGoFilePaths(path string) ([]string, error) {
 				continue
 			}
 
-			absolutePath, err := filepath.Abs(info.Name())
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			foundFiles, err := findGoFilePaths(absolutePath)
+			foundFiles, err := findGoFilePaths(filepath.Join(path, info.Name()))
 			if err != nil {
 				return nil, err
 			}
