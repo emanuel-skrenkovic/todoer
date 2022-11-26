@@ -54,6 +54,23 @@ func findGoFilePaths(path string) ([]string, error) {
 	return goFilePaths, nil
 }
 
+func match(reader *bufio.Reader, nextN int, check string) bool {
+	next, err := reader.Peek(nextN)
+	if err != nil {
+		return false
+	}
+
+	if string(next[:]) != check {
+		return false
+	}
+
+	for i := 0; i < nextN; i++ {
+		_, _ = reader.ReadByte()
+	}
+
+	return true
+}
+
 func getFileTodos(path string) ([]Todo, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -62,7 +79,11 @@ func getFileTodos(path string) ([]Todo, error) {
 
 	// TODO: single line TODO example
 
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Print(err)
+		}
+	}()
 
 	// TODO: multi line todo with
 	// double slashes.
@@ -89,95 +110,119 @@ func getFileTodos(path string) ([]Todo, error) {
 
 MainLoop:
 	for {
+		char, _, err := rd.ReadRune()
+		if err != nil {
+			if err == io.EOF {
+				break MainLoop
+			}
 
-		for {
-			char, _, err := rd.ReadRune()
+			return nil, err
+		}
+
+		if insideTodo && !insideComment {
+			isLineComment := false
+
+			lastChar := " "
+			for string(lastChar) == " " || string(lastChar) == "\t" {
+				lastRune, _, err := rd.ReadRune()
+				if err != nil {
+					return nil, err
+				}
+
+				lastChar = string(lastRune)
+			}
+
+			err = rd.UnreadRune()
 			if err != nil {
-				if err == io.EOF {
-					break MainLoop
-				}
-
-				log.Fatalf("read file line error: %v", err)
-				break
+				return nil, err
 			}
 
-			if char == '*' {
-				next, err := rd.Peek(1)
-				if err != nil {
-					return nil, err
-				}
-
-				nextChar, _ := utf8.DecodeRune(next)
-				if insideComment && nextChar == '/' {
-					insideComment = false
-
-					if insideTodo {
-						current.lineEnd = lineNum
-						todos = append(todos, *current)
-						current = nil
-					}
-
-					insideTodo = false
-
-				}
+			isLineComment = match(rd, 2, "//")
+			if isLineComment {
+				singleLineComment = true
+				insideComment = true
 			}
 
-			if char == '/' {
-				next, err := rd.Peek(1)
-				if err != nil {
-					return nil, err
-				}
+			if !isLineComment {
+				current.lineEnd = lineNum - 1
+				todos = append(todos, *current)
+				current = nil
+				insideTodo = false
+			}
+		}
 
-				nextChar, _ := utf8.DecodeRune(next)
-
-				if !insideComment {
-					singleLineComment = nextChar == '/'
-				}
-
-				multiLineComment := nextChar == '*'
-				insideComment = singleLineComment || multiLineComment
+		if char == '*' {
+			next, err := rd.Peek(1)
+			if err != nil {
+				return nil, err
 			}
 
-			if insideComment && char == 'T' {
-				next, err := rd.Peek(3)
-				if err != nil {
-					return nil, err
+			nextChar, _ := utf8.DecodeRune(next)
+			if insideComment && nextChar == '/' {
+				insideComment = false
+
+				if insideTodo {
+					current.lineEnd = lineNum
+					todos = append(todos, *current)
+					current = nil
 				}
 
-				nextThree := string(next)
-				if nextThree == "ODO" {
-					insideTodo = true
-				}
+				insideTodo = false
+			}
+		}
+
+		if char == '/' {
+			next, err := rd.Peek(1)
+			if err != nil {
+				return nil, err
 			}
 
-			if insideTodo {
-				if current == nil {
-					current = &Todo{filePath: path, lineStart: lineNum}
-				}
+			nextChar, _ := utf8.DecodeRune(next)
 
-				current.content += string(char)
+			if !insideComment {
+				singleLineComment = nextChar == '/'
 			}
 
-			// if singleLineComment {
-			// 	insideComment = false
-			// }
+			multiLineComment := nextChar == '*'
+			insideComment = singleLineComment || multiLineComment
+		}
 
-			if char == '\n' {
-				lineNum += 1
-
-				if singleLineComment {
-					insideComment = false
-
-					if insideTodo {
-						current.lineEnd = lineNum - 1
-						todos = append(todos, *current)
-						current = nil
-						insideTodo = false
-					}
-				}
-
-				singleLineComment = false
+		if insideComment && char == 'T' {
+			next, err := rd.Peek(3)
+			if err != nil {
+				return nil, err
 			}
+
+			nextThree := string(next)
+			if nextThree == "ODO" {
+				insideTodo = true
+			}
+		}
+
+		if insideTodo {
+			if current == nil {
+				current = &Todo{filePath: path, lineStart: lineNum}
+			}
+
+			current.content += string(char)
+		}
+
+		if char == '\n' {
+			lineNum += 1
+
+			if singleLineComment {
+				insideComment = false
+
+				// TODO: move up
+				//if insideTodo {
+				//	current.lineEnd = lineNum - 1
+				//	todos = append(todos, *current)
+				//	current = nil
+				//	insideTodo = false
+				//}
+			}
+
+			singleLineComment = false
 		}
 	}
 
@@ -191,7 +236,8 @@ MainLoop:
 }
 
 func main() {
-	path := os.Args[1]
+	path := "./"
+
 	absolutePath, err := filepath.Abs(path)
 	if err != nil {
 		log.Fatal(err)
@@ -207,14 +253,14 @@ func main() {
 	for _, path := range paths {
 		t, err := getFileTodos(path)
 		if err != nil {
-			fmt.Printf("error occurred getting todos for file %s: %s", path, err.Error())
+			fmt.Printf("error occurred getting todos for file %s: %s\n", path, err.Error())
 			continue
 		}
 
 		todos = append(todos, t...)
 	}
 
-	fmt.Printf("Found %d TODOs\n", len(todos))
+	fmt.Printf("Found %d TODOs in %d file/s.\n", len(todos), len(paths))
 
 	for _, todo := range todos {
 		fmt.Println("===========================")
