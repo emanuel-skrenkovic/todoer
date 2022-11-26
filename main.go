@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -250,15 +251,27 @@ func main() {
 
 	todos := make([]Todo, 0)
 
-	for _, path := range paths {
-		t, err := getFileTodos(path)
-		if err != nil {
-			fmt.Printf("error occurred getting todos for file %s: %s\n", path, err.Error())
-			continue
-		}
+	var wg sync.WaitGroup
+	var lock sync.RWMutex
 
-		todos = append(todos, t...)
+	for _, path := range paths {
+		wg.Add(1)
+
+		go func(wg *sync.WaitGroup, path string) {
+			defer wg.Done()
+
+			t, err := getFileTodos(path)
+			if err != nil {
+				log.Printf("error occurred getting todos for file %s: %s\n", path, err.Error())
+			} else {
+				lock.Lock()
+				defer lock.Unlock()
+				todos = append(todos, t...)
+			}
+		}(&wg, path)
 	}
+
+	wg.Wait()
 
 	fmt.Printf("Found %d TODOs in %d file/s.\n", len(todos), len(paths))
 
