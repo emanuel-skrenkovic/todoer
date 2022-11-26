@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 const goExtension = ".go"
@@ -66,69 +67,118 @@ func getFileTodos(path string) ([]Todo, error) {
 	// TODO: multi line todo with
 	// double slashes.
 
-	todos := make([]Todo, 0)
+	todos := make([]Todo, 0) // TODO: handle todos inline with code
 
+	/* TODO: handle todos inline with code with slash star */
+
+	var current *Todo /* TODO: handle todos starting inline
+	but ending on a different line */
+
+	/*
+	   TODO: multi line comment with
+	   slash star
+	*/
+
+	rd := bufio.NewReader(f) // TODO: inline todo
+
+	singleLineComment := false
 	insideComment := false
 	insideTodo := false
 
-	var current *Todo
-
-	rd := bufio.NewReader(f)
-
 	lineNum := 1
+
+MainLoop:
 	for {
-		line, err := rd.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
+
+		for {
+			char, _, err := rd.ReadRune()
+			if err != nil {
+				if err == io.EOF {
+					break MainLoop
+				}
+
+				log.Fatalf("read file line error: %v", err)
 				break
 			}
 
-			log.Fatalf("read file line error: %v", err)
-			break
-		}
+			if char == '*' {
+				next, err := rd.Peek(1)
+				if err != nil {
+					return nil, err
+				}
 
-		if !insideTodo && current != nil {
-			current.lineEnd = lineNum - 1
-			todos = append(todos, *current)
-			current = nil
-		}
+				nextChar, _ := utf8.DecodeRune(next)
+				if insideComment && nextChar == '/' {
+					insideComment = false
 
-		/* TODO: single line comment with slash star */
+					if insideTodo {
+						current.lineEnd = lineNum
+						todos = append(todos, *current)
+						current = nil
+					}
 
-		/*
-		   TODO: multi line comment with
-		   slash star
-		*/
+					insideTodo = false
 
-		trimmedLine := strings.TrimSpace(line)
+				}
+			}
 
-		if !insideComment {
-			insideComment = strings.HasPrefix(trimmedLine, "/*")
-		}
+			if char == '/' {
+				next, err := rd.Peek(1)
+				if err != nil {
+					return nil, err
+				}
 
-		shortComment := false
-		if !insideComment {
-			shortComment = strings.HasPrefix(trimmedLine, "//")
-			if !shortComment {
-				insideTodo = false
+				nextChar, _ := utf8.DecodeRune(next)
+
+				if !insideComment {
+					singleLineComment = nextChar == '/'
+				}
+
+				multiLineComment := nextChar == '*'
+				insideComment = singleLineComment || multiLineComment
+			}
+
+			if insideComment && char == 'T' {
+				next, err := rd.Peek(3)
+				if err != nil {
+					return nil, err
+				}
+
+				nextThree := string(next)
+				if nextThree == "ODO" {
+					insideTodo = true
+				}
+			}
+
+			if insideTodo {
+				if current == nil {
+					current = &Todo{filePath: path, lineStart: lineNum}
+				}
+
+				current.content += string(char)
+			}
+
+			// if singleLineComment {
+			// 	insideComment = false
+			// }
+
+			if char == '\n' {
+				lineNum += 1
+
+				if singleLineComment {
+					insideComment = false
+
+					if insideTodo {
+						current.lineEnd = lineNum - 1
+						todos = append(todos, *current)
+						current = nil
+						insideTodo = false
+					}
+				}
+
+				singleLineComment = false
 			}
 		}
-
-		if (insideComment || shortComment) && strings.Contains(line, "TODO") {
-			insideTodo = true
-			current = &Todo{filePath: path, lineStart: lineNum}
-		}
-
-		if insideTodo {
-			current.content += line
-		}
-
-		if strings.HasSuffix(trimmedLine, "*/") {
-			insideComment = false
-			insideTodo = false
-		}
-
-		lineNum += 1
 	}
 
 	if current != nil {
@@ -163,6 +213,8 @@ func main() {
 
 		todos = append(todos, t...)
 	}
+
+	fmt.Printf("Found %d TODOs\n", len(todos))
 
 	for _, todo := range todos {
 		fmt.Println("===========================")
