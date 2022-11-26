@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -249,10 +250,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	todos := make([]Todo, 0)
-
 	var wg sync.WaitGroup
 	var lock sync.RWMutex
+
+	fileTodos := make(map[string][]Todo)
 
 	for _, path := range paths {
 		wg.Add(1)
@@ -260,31 +261,53 @@ func main() {
 		go func(wg *sync.WaitGroup, path string) {
 			defer wg.Done()
 
-			t, err := getFileTodos(path)
+			todos, err := getFileTodos(path)
 			if err != nil {
 				log.Printf("error occurred getting todos for file %s: %s\n", path, err.Error())
 			} else {
 				lock.Lock()
 				defer lock.Unlock()
-				todos = append(todos, t...)
+				fileTodos[path] = todos
 			}
 		}(&wg, path)
 	}
 
 	wg.Wait()
 
-	fmt.Printf("Found %d TODOs in %d file/s.\n", len(todos), len(paths))
+	// fmt.Printf("Found %d TODOs in %d file/s.\n", len(todos), len(paths))
 
-	for _, todo := range todos {
-		fmt.Println("===========================")
-		fmt.Printf(
-			"Found TODO in file '%s' starting at: %d, ending at: %d:\n",
-			todo.filePath,
-			todo.lineStart,
-			todo.lineEnd,
-		)
-		fmt.Printf("Content:\n")
-		fmt.Println(todo.content)
-		fmt.Println()
+	for path, todos := range fileTodos {
+		gitBlameBytes, err := exec.Command("git", "--no-pager", "blame", path).
+			Output()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+
+		gitBlame := strings.Split(string(gitBlameBytes), "\n")
+
+		for _, todo := range todos {
+			blamePart := gitBlame[todo.lineStart]
+			start := strings.Index(blamePart, "(") + 1
+			end := strings.Index(blamePart, ")")
+
+			commitInfo := blamePart[start:end]
+			commitInfoParts := strings.Split(commitInfo, " ")
+			committer := commitInfoParts[0] + " " + commitInfoParts[1]
+			committedAt := commitInfoParts[2]
+
+			fmt.Println("===========================")
+			fmt.Printf("TODO by: %s\n", committer)
+			fmt.Printf("Committed at: %s\n", committedAt)
+			fmt.Printf(
+				"Found TODO in file '%s' starting at: %d, ending at: %d:\n",
+				todo.filePath,
+				todo.lineStart,
+				todo.lineEnd,
+			)
+			fmt.Printf("Content:\n")
+			fmt.Println(todo.content)
+			fmt.Println()
+		}
 	}
 }
